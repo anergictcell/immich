@@ -2,6 +2,14 @@
 name = "immich"
 version = "0.1.0"
 edition = "2021"
+authors = ["Jonas Marcello <jonas.marcello@esbme.com>"]
+description = "Client for Immich photo and video management"
+readme = "README.md"
+homepage = "https://github.com/anergictcell/immich"
+repository = "https://github.com/anergictcell/immich"
+license = "MIT"
+keywords = ["immich", "photo", "video", "selfhosted"]
+categories = ["web-programming::http-client", "multimedia::images", "multimedia::video"]
 
 [dependencies]
 thiserror = "2"
