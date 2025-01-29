@@ -1,0 +1,6 @@
+/target
+/testserver
+.env
+docker-compose.yml
+.DS_Store
+Cargo.lock
