@@ -1,152 +1,14 @@
-use std::fmt::Display;
-use std::{fs::File, io::Read, path::PathBuf, slice::Iter, vec::IntoIter};
+use std::{fs::File, io::Read, path::PathBuf};
 
 use serde::Deserialize;
 use sha1_smol::Sha1;
+use ureq::Response;
 
-use crate::utils::{DateTime, CLIENT_NAME};
-use crate::ImmichError;
+use crate::upload::{Upload, Uploaded};
+use crate::utils::{DateTime, Id, User, CLIENT_NAME};
+use crate::{Client, ImmichError, ImmichResult};
 
-#[allow(non_snake_case)]
-#[derive(Deserialize)]
-/// The owner of an [`Asset`] on the Immich server
-pub struct Owner {
-    id: String,
-    email: String,
-    name: String,
-}
-
-impl Owner {
-    /// The id of the owner on the Immich server
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    /// Login email address of the user
-    pub fn email(&self) -> &str {
-        &self.email
-    }
-
-    /// Username
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl Display for Owner {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} <{}> [{}]", self.name(), self.email(), self.id())
-    }
-}
-
-#[allow(non_snake_case)]
-#[derive(Deserialize)]
-/// Album on the remote Immich server
-///
-/// # Examples
-///
-/// ```no_run
-/// use immich::{Asset, Client};
-///
-/// let client = Client::with_email(
-///     "https://immich-web-url/api",
-///     "email@somewhere",
-///     "s3cr3tpassword"
-/// ).unwrap();
-///
-/// for album in client.albums().unwrap() {
-///     println!("{}: {} assets", album.name(), album.len());
-/// }
-/// ```
-pub struct Album {
-    albumName: String,
-    assetCount: usize,
-    id: String,
-    owner: Owner,
-    shared: bool,
-}
-
-impl Album {
-    /// The name of the album
-    pub fn name(&self) -> &str {
-        &self.albumName
-    }
-
-    /// The number of images and videos in the album
-    pub fn len(&self) -> usize {
-        self.assetCount
-    }
-
-    /// Returns true if the album does not hold any images or videos
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// The unique album id
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    /// The owner of the album
-    pub fn owner(&self) -> &Owner {
-        &self.owner
-    }
-
-    /// Returns true if the album is shared
-    pub fn shared(&self) -> bool {
-        self.shared
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(transparent)]
-/// Container that holds all or some [`Album`]s of the remote Immich server
-///
-/// # Examples
-///
-/// ```no_run
-/// use immich::{Asset, Client};
-///
-/// let client = Client::with_email(
-///     "https://immich-web-url/api",
-///     "email@somewhere",
-///     "s3cr3tpassword"
-/// ).unwrap();
-///
-/// let albums = client.albums().unwrap();
-/// println!("Number of albums: {}", albums.len());
-/// ```
-pub struct Albums {
-    albums: Vec<Album>,
-}
-
-impl Albums {
-    /// The number of albums in the container
-    pub fn len(&self) -> usize {
-        self.albums.len()
-    }
-
-    /// Returns true if the container contains no albums
-    pub fn is_empty(&self) -> bool {
-        self.albums.is_empty()
-    }
-}
-
-impl IntoIterator for Albums {
-    type IntoIter = IntoIter<Album>;
-    type Item = Album;
-    fn into_iter(self) -> Self::IntoIter {
-        self.albums.into_iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a Albums {
-    type IntoIter = Iter<'a, Album>;
-    type Item = &'a Album;
-    fn into_iter(self) -> Self::IntoIter {
-        self.albums.iter()
-    }
-}
+pub type AssetId = Id;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 /// Different types of [`Asset`]
@@ -197,11 +59,11 @@ impl Default for AssetRemoteStatus {
 /// assert!(asset.device_asset_id() == "garden.jpg");
 /// ```
 pub struct Asset {
-    id: String,
+    id: Id,
     deviceAssetId: String,
     deviceId: String,
     assetData: Vec<u8>,
-    owner: Option<Owner>,
+    owner: Option<User>,
     #[serde(serialize_with = "serialize_timestamp")]
     fileCreatedAt: DateTime,
     #[serde(serialize_with = "serialize_timestamp")]
@@ -229,18 +91,14 @@ impl Asset {
     ///
     /// # fn nevercalled(mut asset: Asset) {
     /// let client = Client::with_email("https://immich-web-url/api", "email@somewhere", "s3cr3tpassword").unwrap();
-    /// client.upload(&mut asset).unwrap();
+    /// asset.upload(&client).unwrap();
     ///
     /// println!("{}", asset.id());
     /// // "41a3a296-7e86-4eb4-8e44-aead03344fc9"
     /// # }
     /// ```
-    pub fn id(&self) -> &str {
+    pub fn id(&self) -> &Id {
         &self.id
-    }
-
-    pub(crate) fn id_mut(&mut self) -> &mut String {
-        &mut self.id
     }
 
     /// The client-id of the asset, usually the filename
@@ -302,9 +160,9 @@ impl Asset {
     /// use immich::Asset;
     ///
     /// let mut asset: Asset = Asset::try_from(PathBuf::from("./utils/garden.jpg")).unwrap();
-    /// assert_eq!(asset.file_created_at().to_string(), "2025-01-28T05:42:36.000Z");
+    /// assert_eq!(asset.created_at().to_string(), "2025-01-28T05:42:36.000Z");
     /// ```
-    pub fn file_created_at(&self) -> &DateTime {
+    pub fn created_at(&self) -> &DateTime {
         &self.fileCreatedAt
     }
 
@@ -320,9 +178,9 @@ impl Asset {
     /// use immich::Asset;
     ///
     /// let mut asset: Asset = Asset::try_from(PathBuf::from("./utils/garden.jpg")).unwrap();
-    /// assert_eq!(asset.file_modified_at().to_string(), "2025-01-28T05:42:36.000Z");
+    /// assert_eq!(asset.modified_at().to_string(), "2025-01-28T05:42:36.000Z");
     /// ```
-    pub fn file_modified_at(&self) -> &DateTime {
+    pub fn modified_at(&self) -> &DateTime {
         &self.fileModifiedAt
     }
 
@@ -356,13 +214,13 @@ impl Asset {
     /// assert!(asset.owner().is_none());
     /// # fn nevercalled(mut asset: Asset) {
     /// let client = Client::with_email("https://immich-web-url/api", "email@somewhere", "s3cr3tpassword").unwrap();
-    /// client.upload(&mut asset).unwrap();
+    /// asset.upload(&client).unwrap();
     ///
     /// println!("{}", asset.owner().unwrap());
     /// // "Username <email@somewhere> [41a3a296-7e86-4eb4-8e44-aead03344fc9]"
     /// # }
     /// ```
-    pub fn owner(&self) -> Option<&Owner> {
+    pub fn owner(&self) -> Option<&User> {
         self.owner.as_ref()
     }
 
@@ -409,12 +267,55 @@ impl Asset {
     pub fn checksum(&self) -> String {
         Sha1::from(&self.assetData).hexdigest()
     }
+
+    /// Uploads the asset to the Immich remote server
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use immich::{Asset, Client};
+    ///
+    /// let image = "/path/to/image or video";
+    /// let mut asset: Asset = std::path::PathBuf::from(image).try_into().unwrap();
+    ///
+    /// let client = Client::with_email(
+    ///     "https://immich-web-url/api",
+    ///     "email@somewhere",
+    ///     "s3cr3tpassword"
+    /// ).unwrap();
+    ///
+    /// let upload_status = asset.upload(&client).unwrap();
+    ///
+    /// println!(
+    ///     "{}: {} [Remote ID: {}]",
+    ///     upload_status.device_asset_id(),
+    ///     upload_status.status(),
+    ///     upload_status.id()
+    /// );
+    /// ```
+    pub fn upload(&mut self, client: &Client) -> ImmichResult<Uploaded> {
+        let resp = Upload::post(client, self)?;
+        match resp.status() {
+            201 | 200 => self.parse_upload(resp),
+            other => Err(ImmichError::Status(other, resp.into_string()?)),
+        }
+    }
+
+    fn parse_upload(&mut self, response: Response) -> ImmichResult<Uploaded> {
+        let mut response: Uploaded = response.into_json()?;
+        self.remote_status = AssetRemoteStatus::Present;
+        self.id = response.id().clone();
+        response
+            .device_asset_id_mut()
+            .push_str(self.device_asset_id());
+        Ok(response)
+    }
 }
 
 impl Default for Asset {
     fn default() -> Self {
         Self {
-            id: "".to_string(),
+            id: Id::default(),
             deviceAssetId: format!("{CLIENT_NAME}-empty"),
             deviceId: CLIENT_NAME.to_string(),
             assetData: vec![],
@@ -509,3 +410,4 @@ impl TryFrom<File> for Asset {
         Ok(asset)
     }
 }
+

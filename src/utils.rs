@@ -1,6 +1,6 @@
 use std::{fmt::Display, time::SystemTime};
 
-use serde::{Deserialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use thiserror::Error;
 use time::{
     format_description::BorrowedFormatItem, macros::format_description, Date, OffsetDateTime, Time,
@@ -108,6 +108,9 @@ pub enum ImmichError {
     #[error("Invalid date")]
     /// The provided date is not valid
     InvalidDate,
+    #[error("Invalid ID")]
+    /// The provided ID is not valid
+    InvalidId,
 }
 
 impl From<ureq::Error> for ImmichError {
@@ -126,4 +129,125 @@ impl From<ureq::Error> for ImmichError {
     }
 }
 
+impl From<ureq::Response> for ImmichError {
+    fn from(resp: ureq::Response) -> Self {
+        ImmichError::Status(resp.status(), resp.status_text().to_string())
+    }
+}
+
+impl<T> From<crossbeam_channel::SendError<T>> for ImmichError {
+    fn from(_value: crossbeam_channel::SendError<T>) -> Self {
+        ImmichError::Multithread
+    }
+}
+
 pub type ImmichResult<T> = Result<T, ImmichError>;
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct Id {
+    id: String,
+}
+
+impl Id {
+    pub(crate) fn is_safe(&self) -> bool {
+        if self.id.len() != 36 {
+            return false;
+        }
+        self.id
+            .chars()
+            .enumerate()
+            .filter(|(idx, c)| {
+                let t = c.is_alphanumeric()
+                    || (*idx == 8 && *c == '-')
+                    || (*idx == 13 && *c == '-')
+                    || (*idx == 18 && *c == '-')
+                    || (*idx == 23 && *c == '-');
+                if !t {
+                    println!("{idx}: {c} [{t}]");
+                }
+                !t
+            })
+            .count()
+            == 0
+    }
+}
+
+impl Display for Id {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.id)
+    }
+}
+
+impl TryFrom<String> for Id {
+    type Error = ImmichError;
+    fn try_from(id: String) -> Result<Self, Self::Error> {
+        let x = Self { id };
+        if x.is_safe() {
+            Ok(x)
+        } else {
+            Err(ImmichError::InvalidId)
+        }
+    }
+}
+
+impl TryFrom<&str> for Id {
+    type Error = ImmichError;
+    fn try_from(id: &str) -> Result<Self, Self::Error> {
+        Self::try_from(id.to_string())
+    }
+}
+
+impl PartialEq<str> for Id {
+    fn eq(&self, other: &str) -> bool {
+        self.id == other
+    }
+}
+
+#[allow(non_snake_case)]
+#[derive(Deserialize)]
+/// The owner of an [`Asset`] on the Immich server
+pub struct User {
+    id: Id,
+    email: String,
+    name: String,
+}
+
+impl User {
+    /// The id of the owner on the Immich server
+    pub fn id(&self) -> &Id {
+        &self.id
+    }
+
+    /// Login email address of the user
+    pub fn email(&self) -> &str {
+        &self.email
+    }
+
+    /// Username
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl Display for User {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} <{}> [{}]", self.name(), self.email(), self.id())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_safe_uuid() {
+        assert!(Id::try_from("3fa85f64-5717-4562-b3fc-2c963f66afa6").is_ok());
+        assert!(Id::try_from("/3fa85f645717-4562-b3fc-2c963f66afa6").is_err());
+        assert!(Id::try_from("3fa85f64.5717-4562-b3fc-2c963f66afa6").is_err());
+        assert!(Id::try_from("3fa85f64/5717-4562-b3fc-2c963f66afa6").is_err());
+        assert!(Id::try_from("3fa85f[]-5717-4562-b3fc-2c963f66afa6").is_err());
+        assert!(Id::try_from("3fa()f64-5717-4562-b3fc-2c963f66afa6").is_err());
+        assert!(Id::try_from("3f..5f64-5717-4562-b3fc-2c963f66afa6").is_err());
+    }
+}

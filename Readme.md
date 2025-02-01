@@ -46,7 +46,7 @@ fn example() {
         "s3cr3tpassword"
     ).unwrap();
 
-    let upload_status = client.upload(&mut asset).unwrap();
+    let upload_status = asset.upload(&client).unwrap();
 
     println!(
         "{}: {} [Remote ID: {}]",
@@ -83,15 +83,15 @@ fn example() {
                 }
         });
 
-    let (sender, receiver) = unbounded::<immich::upload::Uploaded>();
+    let (progress_sender, progress_receiver) = unbounded::<immich::upload::Uploaded>();
 
     std::thread::spawn(move || {
-        while let Ok(result) = receiver.recv() {
+        while let Ok(result) = progress_receiver.recv() {
             println!("File uploaded: {}: {}", result.status(), result.device_asset_id())
         }
     });
 
-    client.parallel_upload_with_progress(5, asset_iterator, sender)
+    client.upload(5, asset_iterator, Some(progress_sender))
         .expect("Parallel upload works");
 }
 ```

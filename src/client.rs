@@ -1,13 +1,17 @@
-use crossbeam_channel::Sender;
-use ureq::{Request, Response};
+use std::thread;
 
+use crossbeam_channel::{unbounded, Sender};
+use ureq::Request;
+
+use crate::album::Albums;
 use crate::api::bulk_check::BulkUploadCheck;
-use crate::api::upload::{ParallelUpload, Upload, Uploaded};
-use crate::asset::{Albums, Asset, AssetRemoteStatus};
+use crate::api::requests::MovedAsset;
+use crate::api::upload::{ParallelUpload, Uploaded};
+use crate::asset::Asset;
 use crate::host::Host;
 use crate::url::Url;
 use crate::utils::DEFAULT_HEADERS;
-use crate::{ImmichError, ImmichResult};
+use crate::{Album, ImmichError, ImmichResult, User};
 
 use crate::auth::Authenticated;
 
@@ -90,6 +94,22 @@ impl Client {
         }
     }
 
+    pub(crate) fn user(&self) -> ImmichResult<User> {
+        match self.get("/users/me").call() {
+            Ok(response) => {
+                if response.status() == 200 {
+                    Ok(response.into_json()?)
+                } else {
+                    Err(ImmichError::Status(
+                        response.status(),
+                        response.into_string()?,
+                    ))
+                }
+            }
+            Err(err) => Err(ImmichError::Transport(err.to_string())),
+        }
+    }
+
     pub(crate) fn get(&self, url: &str) -> Request {
         ureq::get(&self.url.add_path(url))
             .add_default_header()
@@ -98,6 +118,12 @@ impl Client {
 
     pub(crate) fn post(&self, url: &str) -> Request {
         ureq::post(&self.url.add_path(url))
+            .add_default_header()
+            .auth(&self.auth)
+    }
+
+    pub(crate) fn put(&self, url: &str) -> Request {
+        ureq::put(&self.url.add_path(url))
             .add_default_header()
             .auth(&self.auth)
     }
@@ -130,7 +156,7 @@ impl Client {
     ///
     /// This method can be used to cheaply check if upload of a large set of images or videos is
     /// required. However, it is not that useful, to be honest. If you plan on uploading, just
-    /// go ahead and upload - the [`Client::upload`] method does check if the media is already
+    /// go ahead and upload - the [`Asset::upload`] method does check if the media is already
     /// present on the server, before it uploads, anyway.
     ///
     /// This method requires that the API's response contains the same number of records as the input data.
@@ -146,49 +172,6 @@ impl Client {
         BulkUploadCheck::post(self, assets)
     }
 
-    fn parse_upload(&self, asset: &mut Asset, response: Response) -> ImmichResult<Uploaded> {
-        let mut response: Uploaded = response.into_json()?;
-        *asset.remote_status_mut() = AssetRemoteStatus::Present;
-        asset.id_mut().push_str(response.id());
-        response
-            .device_asset_id_mut()
-            .push_str(asset.device_asset_id());
-        Ok(response)
-    }
-
-    /// Uploads a single image or video
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use immich::{Asset, Client};
-    ///
-    /// let image = "/path/to/image or video";
-    /// let mut asset: Asset = std::path::PathBuf::from(image).try_into().unwrap();
-    ///
-    /// let client = Client::with_email(
-    ///     "https://immich-web-url/api",
-    ///     "email@somewhere",
-    ///     "s3cr3tpassword"
-    /// ).unwrap();
-    ///
-    /// let upload_status = client.upload(&mut asset).unwrap();
-    ///
-    /// println!(
-    ///     "{}: {} [Remote ID: {}]",
-    ///     upload_status.device_asset_id(),
-    ///     upload_status.status(),
-    ///     upload_status.id()
-    /// );
-    /// ```
-    pub fn upload(&self, asset: &mut Asset) -> ImmichResult<Uploaded> {
-        let resp = Upload::post(self, asset)?;
-        match resp.status() {
-            201 | 200 => self.parse_upload(asset, resp),
-            other => Err(ImmichError::Status(other, resp.into_string()?)),
-        }
-    }
-
     /// Uploads many images or videos in parallel
     ///
     /// This method is useful for large collections of media assets, for example for upload a
@@ -196,8 +179,8 @@ impl Client {
     /// The upload can happen in parallel to the parsing of the media assets, if you use a
     /// proper iterator.
     ///
-    /// This method is similar to [`Client::parallel_upload_with_progress`], but does not
-    /// provide live updates about the upload progress.
+    /// This methods blocks until all assets are uploaded. If you want to receive progress upate
+    /// you can pass a `crossbeam_channel` that is used to send info about each uploaded asset.
     ///
     /// # Examples
     ///
@@ -224,7 +207,7 @@ impl Client {
     ///     });
     ///
     ///
-    /// let result = client.parallel_upload(5, asset_iterator)
+    /// let result = client.upload(5, asset_iterator, None)
     ///     .expect("Parallel upload works");
     ///
     /// for entry in result {
@@ -235,25 +218,7 @@ impl Client {
     /// }
     /// ```
     ///
-    pub fn parallel_upload<I: Iterator<Item = Asset>>(
-        &self,
-        threads: usize,
-        assets: I,
-    ) -> ImmichResult<Vec<Uploaded>> {
-        ParallelUpload::new(threads).post(self, assets)
-    }
-
-    /// Uploads many images or videos in parallel with progress updates
-    ///
-    /// This method is useful for large collections of media assets, for example for upload a
-    /// folder of images and videos.
-    /// The upload can happen in parallel to the parsing of the media assets, if you use a
-    /// proper iterator.
-    ///
-    /// This method is similar to [`Client::parallel_upload`], but allows for live progress
-    /// updates through a feedback `Channel`.
-    ///
-    /// # Examples
+    /// Specify a `crossbeam_channel` to print live progress update of the upload
     ///
     /// ```no_run
     /// use crossbeam_channel::unbounded;
@@ -286,20 +251,98 @@ impl Client {
     ///     }
     /// });
     ///
-    /// client.parallel_upload_with_progress(5, asset_iterator, sender)
+    /// let result = client.upload(5, asset_iterator, Some(sender))
     ///     .expect("Parallel upload works");
     /// ```
     ///
-    pub fn parallel_upload_with_progress<I: Iterator<Item = Asset>>(
+    pub fn upload<I: Iterator<Item = Asset>>(
         &self,
-        threads: usize,
+        upload_concurrency: usize,
         assets: I,
-        feedback: Sender<Uploaded>,
-    ) -> ImmichResult<()> {
-        ParallelUpload::new(threads).post_with_progress(self, assets, feedback)
+        progress_channel: Option<Sender<Uploaded>>,
+    ) -> ImmichResult<Vec<Uploaded>> {
+        ParallelUpload::new(upload_concurrency).post(self, assets, progress_channel)
     }
 
     pub(crate) fn auth(&self) -> &Authenticated {
         &self.auth
+    }
+
+    /// Uploads assets and adds them to an album after the upload
+    ///
+    /// The upload can happen in parallel to the parsing of the media assets, if you use a
+    /// proper iterator.
+    ///
+    /// The `threads` parameters specifies the number of parallel upload threads.
+    ///
+    /// This methods blocks until all assets are uploaded and added to the album.If you want to
+    /// receive progress upate you can specify a `crossbeam_channel` that is used to send info
+    /// about each uploaded asset.
+    ///
+    /// ```no_run
+    /// use crossbeam_channel::unbounded;
+    /// use immich::{Album, Asset, Client};
+    ///
+    /// let client = Client::with_email(
+    ///     "https://immich-web-url/api",
+    ///     "email@somewhere",
+    ///     "s3cr3tpassword"
+    /// ).unwrap();
+    ///
+    /// let path = "/path/to/folder/with/images or videos";
+    ///
+    /// let album = Album::get_or_create(&client, "My Album".to_string()).unwrap();
+    ///
+    /// let asset_iterator = std::fs::read_dir(path).unwrap()
+    ///     .filter_map(|entry| {
+    ///         let entry = entry.unwrap();
+    ///         let path = entry.path();
+    ///             if path.is_dir() {
+    ///                 None
+    ///             } else {
+    ///                 Asset::try_from(path).ok()
+    ///             }
+    ///     });
+    ///
+    ///
+    /// let (sender, receiver) = unbounded::<immich::upload::Uploaded>();
+    /// std::thread::spawn(move || {
+    ///     while let Ok(result) = receiver.recv() {
+    ///         println!("{}: {}", result.status(), result.device_asset_id())
+    ///     }
+    /// });
+    ///
+    /// let result = client.upload_to_album(5, asset_iterator, &album, Some(sender))
+    ///     .expect("All assets uploaded and added to album");
+    /// ```
+    ///
+    pub fn upload_to_album<I: Iterator<Item = Asset>>(
+        &self,
+        upload_concurrency: usize,
+        assets: I,
+        album: &Album,
+        progress_channel: Option<Sender<Uploaded>>,
+    ) -> ImmichResult<Vec<MovedAsset>> {
+        let results = if let Some(sender) = progress_channel {
+            let (proxy_sender, proxy_receiver) = unbounded::<Uploaded>();
+
+            let t = thread::spawn(move || {
+                let mut thread_results: Vec<Uploaded> = Vec::new();
+                while let Ok(uploaded) = proxy_receiver.recv() {
+                    thread_results.push(uploaded.clone());
+                    sender
+                        .send(uploaded)
+                        .expect("The feedback channel must remain open throughout");
+                }
+                thread_results
+            });
+
+            self.upload(upload_concurrency, assets, Some(proxy_sender))?;
+            t.join().map_err(|_| ImmichError::Multithread)?
+        } else {
+            self.upload(upload_concurrency, assets, None)?
+        };
+
+        album.add_uploaded(self, results)
     }
 }

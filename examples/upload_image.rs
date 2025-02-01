@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use immich::Client;
+use immich::{Asset, Client};
 
 fn main() {
     let mut args = std::env::args();
@@ -18,9 +18,9 @@ fn main() {
     let client =
         Client::with_email(&url, &email, &password).expect("Unable to connect to specified host");
 
-    let mut asset = PathBuf::from(image).try_into().expect("Cant read image");
+    let mut asset: Asset = PathBuf::from(image).try_into().expect("Cant read image");
 
-    let res = client.upload(&mut asset);
+    let res = asset.upload(&client);
 
     println!("{:?}", res);
 }

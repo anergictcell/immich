@@ -1,4 +1,5 @@
 use crate::asset::AssetRemoteStatus;
+use crate::utils::Id;
 use crate::ImmichError;
 use crate::{asset::Asset, Client, ImmichResult};
 use std::iter::zip;
@@ -46,12 +47,12 @@ impl IntoIterator for BulkCheckResults {
 
 #[derive(Deserialize)]
 struct BulkCheckResult {
-    pub id: String,
+    pub id: Id,
     pub action: BulkCheckAction,
 }
 
 impl BulkCheckResult {
-    fn id(&self) -> &str {
+    fn id(&self) -> &Id {
         &self.id
     }
 }

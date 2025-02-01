@@ -6,10 +6,11 @@ use serde::Deserialize;
 use ureq::Response;
 
 use crate::client::ImmichClient;
+use crate::utils::Id;
 use crate::ImmichError;
 use crate::{multipart::MultipartBuilder, Asset, Client, ImmichResult};
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 /// Response status of an asset upload
 pub enum Status {
     #[serde(rename(deserialize = "created"))]
@@ -33,11 +34,11 @@ impl Display for Status {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 /// Response of the Immich server for an uploaded asset
 pub struct Uploaded {
     status: Status,
-    id: String,
+    id: Id,
     #[serde(default)]
     device_asset_id: String,
 }
@@ -46,13 +47,13 @@ impl Uploaded {
     pub(crate) fn from_failure(device_asset_id: &str) -> Self {
         Self {
             status: Status::Failure,
-            id: String::new(),
+            id: Id::default(),
             device_asset_id: String::from(device_asset_id),
         }
     }
 
     /// Returns the id of the uploaded/checked [`Asset`]
-    pub fn id(&self) -> &str {
+    pub fn id(&self) -> &Id {
         &self.id
     }
 
@@ -98,8 +99,8 @@ impl Upload {
         Ok(MultipartBuilder::new()
             .add_text("deviceAssetId", asset.device_asset_id())?
             .add_text("deviceId", asset.device_id())?
-            .add_text("fileCreatedAt", &asset.file_created_at().to_string())?
-            .add_text("fileModifiedAt", &asset.file_modified_at().to_string())?
+            .add_text("fileCreatedAt", &asset.created_at().to_string())?
+            .add_text("fileModifiedAt", &asset.modified_at().to_string())?
             .add_bytes(
                 asset.asset_data(),
                 "assetData",
@@ -138,7 +139,7 @@ impl ParallelUpload {
 
                 thread::spawn(move || {
                     while let Ok(mut asset) = rec.recv() {
-                        let _ = match client.upload(&mut asset) {
+                        let _ = match asset.upload(&client) {
                             Ok(response) => res.send(response),
                             Err(_) => res.send(Uploaded::from_failure(asset.device_asset_id())),
                         };
@@ -152,6 +153,7 @@ impl ParallelUpload {
         &self,
         client: &Client,
         assets: I,
+        feedback: Option<Sender<Uploaded>>,
     ) -> ImmichResult<Vec<Uploaded>> {
         let (asset_sender, asset_receiver) = bounded::<Asset>(self.threads * 2);
 
@@ -162,47 +164,18 @@ impl ParallelUpload {
         let results = thread::spawn(move || {
             let mut result = Vec::new();
             while let Ok(response) = result_receiver.recv() {
-                result.push(response);
+                result.push(response.clone());
+                if let Some(channel) = &feedback {
+                    channel
+                        .send(response)
+                        .expect("The feedback channel must remain open throughout");
+                }
             }
             result
         });
 
         for asset in assets {
-            asset_sender
-                .send(asset)
-                .map_err(|_| ImmichError::Multithread)?
-        }
-        drop(asset_sender);
-
-        for thread in threads {
-            thread.join().map_err(|_| ImmichError::Multithread)?
-        }
-
-        results.join().map_err(|_| ImmichError::Multithread)
-    }
-
-    pub fn post_with_progress<I: Iterator<Item = Asset>>(
-        &self,
-        client: &Client,
-        assets: I,
-        feedback: Sender<Uploaded>,
-    ) -> ImmichResult<()> {
-        let (asset_sender, asset_receiver) = bounded::<Asset>(self.threads * 2);
-
-        let (result_sender, result_receiver) = unbounded::<Uploaded>();
-
-        let threads = self.upload(asset_receiver, result_sender, client);
-
-        let results = thread::spawn(move || {
-            while let Ok(response) = result_receiver.recv() {
-                feedback.send(response).unwrap();
-            }
-        });
-
-        for asset in assets {
-            asset_sender
-                .send(asset)
-                .map_err(|_| ImmichError::Multithread)?
+            asset_sender.send(asset)?
         }
         drop(asset_sender);
 

@@ -24,8 +24,8 @@ impl<'a> From<&'a Asset> for AssetUpload<'a> {
         Self {
             deviceAssetId: asset.device_asset_id(),
             deviceId: asset.device_id(),
-            fileCreatedAt: asset.file_created_at(),
-            fileModifiedAt: asset.file_modified_at(),
+            fileCreatedAt: asset.created_at(),
+            fileModifiedAt: asset.modified_at(),
             assetData: asset.asset_data(),
         }
     }

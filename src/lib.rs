@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+mod album;
 mod api;
 mod asset;
 mod auth;
@@ -9,7 +10,8 @@ mod multipart;
 mod url;
 mod utils;
 
+pub use album::{Album, Albums};
 pub use api::upload;
-pub use asset::{Album, Albums, Asset, AssetRemoteStatus, AssetType, Owner};
+pub use asset::{Asset, AssetRemoteStatus, AssetType};
 pub use client::Client;
-pub use utils::{DateTime, ImmichError, ImmichResult};
+pub use utils::{DateTime, ImmichError, ImmichResult, User};
