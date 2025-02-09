@@ -117,6 +117,8 @@ pub enum ImmichError {
     #[error("Invalid ID")]
     /// The provided ID is not valid
     InvalidId,
+    #[error("Unable to read Takeout archive")]
+    InvalidTakeoutArchive,
 }
 
 impl From<ureq::Error> for ImmichError {
@@ -144,6 +146,12 @@ impl From<ureq::Response> for ImmichError {
 impl<T> From<crossbeam_channel::SendError<T>> for ImmichError {
     fn from(_value: crossbeam_channel::SendError<T>) -> Self {
         ImmichError::Multithread
+    }
+}
+
+impl From<crate::takeout::ParseError> for ImmichError {
+    fn from(_err: crate::takeout::ParseError) -> Self {
+        Self::InvalidTakeoutArchive
     }
 }
 

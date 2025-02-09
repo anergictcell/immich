@@ -10,6 +10,8 @@ mod multipart;
 mod url;
 mod utils;
 
+pub mod takeout;
+
 pub use album::{Album, Albums};
 pub use api::requests::{AssetMoveError, MovedAsset};
 pub use api::upload;

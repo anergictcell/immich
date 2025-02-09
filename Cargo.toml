@@ -19,3 +19,5 @@ ureq = {version = "2", features = ["native-certs", "cookies", "json"]}
 sha1_smol = {version = "1.0.1", features = ["std"]}
 time = {version = "0.3", features = ["formatting", "macros", "std", "serde"]}
 crossbeam-channel = "0.5.14"
+tar = "0.4"
+flate2 = "1"
