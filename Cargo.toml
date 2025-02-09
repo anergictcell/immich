@@ -1,6 +1,6 @@
 [package]
 name = "immich"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Jonas Marcello <jonas.marcello@esbme.com>"]
 description = "Client for Immich photo and video management"
