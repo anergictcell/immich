@@ -6,9 +6,8 @@ use serde::Deserialize;
 use ureq::Response;
 
 use crate::client::ImmichClient;
-use crate::utils::Id;
-use crate::ImmichError;
 use crate::{multipart::MultipartBuilder, Asset, Client, ImmichResult};
+use crate::{AssetId, ImmichError};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 /// Response status of an asset upload
@@ -38,7 +37,7 @@ impl Display for Status {
 /// Response of the Immich server for an uploaded asset
 pub struct Uploaded {
     status: Status,
-    id: Id,
+    id: AssetId,
     #[serde(default)]
     device_asset_id: String,
 }
@@ -47,13 +46,13 @@ impl Uploaded {
     pub(crate) fn from_failure(device_asset_id: &str) -> Self {
         Self {
             status: Status::Failure,
-            id: Id::default(),
+            id: AssetId::default(),
             device_asset_id: String::from(device_asset_id),
         }
     }
 
     /// Returns the id of the uploaded/checked [`Asset`]
-    pub fn id(&self) -> &Id {
+    pub fn id(&self) -> &AssetId {
         &self.id
     }
 

@@ -33,14 +33,6 @@ impl Host {
             let auth = Authenticated::Cookie(format!("immich_access_token={}", login.accessToken));
             Ok(Client::new(self.url, auth))
         } else {
-            println!(
-                "Response code: {}: {}\n\n{}",
-                response.status(),
-                response.status_text().to_string(),
-                response
-                    .into_string()
-                    .unwrap_or("Unreadable error message".to_string())
-            );
             Err(ImmichError::Auth)
         }
     }

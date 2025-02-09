@@ -4,6 +4,7 @@ use serde::Deserialize;
 use sha1_smol::Sha1;
 use ureq::Response;
 
+use crate::takeout::Record;
 use crate::upload::{Upload, Uploaded};
 use crate::utils::{DateTime, Id, User, CLIENT_NAME};
 use crate::{Client, ImmichError, ImmichResult};
@@ -59,7 +60,7 @@ impl Default for AssetRemoteStatus {
 /// assert!(asset.device_asset_id() == "garden.jpg");
 /// ```
 pub struct Asset {
-    id: Id,
+    id: AssetId,
     deviceAssetId: String,
     deviceId: String,
     assetData: Vec<u8>,
@@ -97,7 +98,7 @@ impl Asset {
     /// // "41a3a296-7e86-4eb4-8e44-aead03344fc9"
     /// # }
     /// ```
-    pub fn id(&self) -> &Id {
+    pub fn id(&self) -> &AssetId {
         &self.id
     }
 
@@ -356,8 +357,6 @@ impl TryFrom<PathBuf> for Asset {
         if let Some(name) = path.file_name() {
             asset.deviceAssetId.clear();
             asset.deviceAssetId.push_str(&name.to_string_lossy());
-        } else {
-            println!("Unable to get filename. Use timestamp of creation instead");
         }
         Ok(asset)
     }
@@ -394,16 +393,10 @@ impl TryFrom<File> for Asset {
         if let Ok(meta) = file.metadata() {
             if let Ok(time) = meta.created() {
                 asset.fileCreatedAt = time.into();
-            } else {
-                println!("Cannot get creation timestamp from file")
             }
             if let Ok(time) = meta.modified() {
                 asset.fileModifiedAt = time.into();
-            } else {
-                println!("Cannot get modified timestamp from file")
             }
-        } else {
-            println!("Cannot extract creation and modification timestamps from file")
         }
         asset.deviceAssetId = format!("{CLIENT_NAME} - {}", asset.fileCreatedAt.filename());
         let _ = file.read_to_end(&mut asset.assetData)?;
@@ -411,3 +404,25 @@ impl TryFrom<File> for Asset {
     }
 }
 
+impl TryFrom<Record<'_>> for Asset {
+    type Error = ImmichError;
+    fn try_from(mut record: Record) -> Result<Self, Self::Error> {
+        let mut asset = Asset::default();
+
+        if let Some(date) = record.date_taken() {
+            asset.fileCreatedAt = date.into();
+        }
+
+        if let Some(date) = record.date_modified() {
+            asset.fileModifiedAt = date.into();
+        }
+
+        asset.deviceAssetId.clear();
+        asset.deviceAssetId.push_str(record.name());
+        asset.deviceId.push_str(" [Google Takeout Import]");
+
+        let _ = record.read_to_end(&mut asset.assetData)?;
+
+        Ok(asset)
+    }
+}

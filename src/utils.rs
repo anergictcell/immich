@@ -78,6 +78,12 @@ impl From<SystemTime> for DateTime {
     }
 }
 
+impl From<OffsetDateTime> for DateTime {
+    fn from(time: OffsetDateTime) -> Self {
+        Self(time)
+    }
+}
+
 #[derive(Error, Debug)]
 /// Error types used in this crate
 pub enum ImmichError {
@@ -150,26 +156,19 @@ pub struct Id {
 }
 
 impl Id {
+    /// Poor-man's check that the ID is formatted like a UUID
+    /// f0edb589-1312-4161-b41e-0a18f127b3dd
     pub(crate) fn is_safe(&self) -> bool {
         if self.id.len() != 36 {
             return false;
         }
-        self.id
-            .chars()
-            .enumerate()
-            .filter(|(idx, c)| {
-                let t = c.is_alphanumeric()
-                    || (*idx == 8 && *c == '-')
-                    || (*idx == 13 && *c == '-')
-                    || (*idx == 18 && *c == '-')
-                    || (*idx == 23 && *c == '-');
-                if !t {
-                    println!("{idx}: {c} [{t}]");
-                }
-                !t
-            })
-            .count()
-            == 0
+        self.id.chars().enumerate().all(|(idx, c)| {
+            c.is_alphanumeric()
+                || (idx == 8 && c == '-')
+                || (idx == 13 && c == '-')
+                || (idx == 18 && c == '-')
+                || (idx == 23 && c == '-')
+        })
     }
 }
 
@@ -206,7 +205,7 @@ impl PartialEq<str> for Id {
 
 #[allow(non_snake_case)]
 #[derive(Deserialize)]
-/// The owner of an [`Asset`] on the Immich server
+/// The owner of an [`crate::Asset`] on the Immich server
 pub struct User {
     id: Id,
     email: String,
@@ -242,6 +241,7 @@ mod tests {
 
     #[test]
     fn test_safe_uuid() {
+        assert!(Id::try_from("f0edb589-1312-4161-b41e-0a18f127b3dd").is_ok());
         assert!(Id::try_from("3fa85f64-5717-4562-b3fc-2c963f66afa6").is_ok());
         assert!(Id::try_from("/3fa85f645717-4562-b3fc-2c963f66afa6").is_err());
         assert!(Id::try_from("3fa85f64.5717-4562-b3fc-2c963f66afa6").is_err());

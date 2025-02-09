@@ -40,6 +40,7 @@ impl<I: Iterator<Item = AssetId>> From<I> for AddToAlbum {
     }
 }
 
+/// Types of errors that can occur while trying to assign an asset to an album
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub enum AssetMoveError {
     #[serde(rename(deserialize = "duplicate"))]
@@ -53,16 +54,16 @@ pub enum AssetMoveError {
     UploadFailed,
 }
 
-/// Immich API response for adding an asset to an album
+/// The result of the operation to assign an asset to an album
 #[derive(Deserialize)]
 pub struct MovedAsset {
     error: Option<AssetMoveError>,
-    id: Id,
+    id: AssetId,
     success: bool,
 }
 
 impl MovedAsset {
-    pub fn new(id: Id, success: bool) -> Self {
+    pub(crate) fn new(id: AssetId, success: bool) -> Self {
         if success {
             Self {
                 error: None,
@@ -78,7 +79,7 @@ impl MovedAsset {
         }
     }
 
-    pub(crate) fn from_failed_upload(id: Id) -> Self {
+    pub(crate) fn from_failed_upload(id: AssetId) -> Self {
         Self {
             error: Some(AssetMoveError::UploadFailed),
             id,
@@ -90,7 +91,7 @@ impl MovedAsset {
         &self.error
     }
 
-    pub fn id(&self) -> &Id {
+    pub fn id(&self) -> &AssetId {
         &self.id
     }
 
