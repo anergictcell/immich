@@ -88,7 +88,7 @@ impl Client {
     }
 
     pub(crate) fn check_auth(&self) -> bool {
-        match self.get("/auth/validateToken").call() {
+        match self.post("/auth/validateToken").call() {
             Ok(response) => response.status() == 200,
             Err(_) => false,
         }
